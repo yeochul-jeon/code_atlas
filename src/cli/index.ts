@@ -12,6 +12,7 @@ import {
   deleteProject,
 } from '../storage/queries.js';
 import { deadCodeAction } from './dead-code.js';
+import { loadConfig } from '../config/loader.js';
 
 const DB_PATH = join(homedir(), '.codeatlas', 'index.db');
 
@@ -43,10 +44,13 @@ program
     const name = opts.name ?? basename(absPath);
     const db = getDb();
 
+    const config = loadConfig(absPath);
     console.log(`Indexing ${name} (${absPath})${opts.incremental ? ' [incremental]' : ''}...`);
     const result = indexProject(db, absPath, name, {
       incremental: opts.incremental,
       verbose: opts.verbose,
+      extensions: config.indexer.extensions,
+      skipDirs: config.indexer.skipDirs,
     });
 
     console.log(`\nDone in ${result.durationMs}ms`);
@@ -174,7 +178,16 @@ program
   .option('-k, --kind <kind>', 'Filter by kind: class|interface|enum|method|field')
   .action((project: string | undefined, opts: { kind?: string }) => {
     const db = getDb();
-    const result = deadCodeAction(db, project, opts.kind);
+    // Resolve project root for config loading
+    const projectRoot = project
+      ? (listProjects(db).find(x => x.name === project || x.root_path === resolve(project))?.root_path)
+      : undefined;
+    const config = projectRoot ? loadConfig(projectRoot) : undefined;
+    const deadCodeOpts = config ? {
+      excludeAnnotations: new Set(config.deadCode.excludeAnnotations),
+      excludePatterns: config.deadCode.excludePatterns,
+    } : undefined;
+    const result = deadCodeAction(db, project, opts.kind, deadCodeOpts);
     if (result.exitCode !== 0) {
       console.error(result.output);
       process.exit(result.exitCode);

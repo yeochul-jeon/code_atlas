@@ -1,3 +1,5 @@
+// @ts-ignore — picomatch ships without bundled TS types in this project
+import picomatch from 'picomatch';
 import type { Db } from './database.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -310,7 +312,7 @@ export function listFilesWithSummaries(
 // Annotations that mark a symbol as "live" (cannot be dead code).
 // Includes standard Spring stereotypes and common hexagonal-arch custom annotations
 // that are meta-annotated with @Component (@WebAdapter, @UseCase, @PersistenceAdapter, @ApiAdapter).
-const EXCLUDED_ANNOTATIONS = new Set([
+export const DEFAULT_EXCLUDED_ANNOTATIONS = new Set([
   // Spring stereotypes
   '@RestController', '@Controller',
   '@Service',
@@ -343,10 +345,16 @@ export interface DeadSymbol {
   root_path: string;
 }
 
+export interface DeadCodeOptions {
+  excludeAnnotations?: Set<string>;
+  excludePatterns?: string[];
+}
+
 export function findDeadCode(
   db: Db,
   projectId: number,
-  kind?: string
+  kind?: string,
+  options?: DeadCodeOptions,
 ): DeadSymbol[] {
   type Row = DeadSymbol;
 
@@ -369,6 +377,10 @@ export function findDeadCode(
 
   const rows = db.prepare(sql).all(...params) as Row[];
 
+  const effectiveAnnotations = options?.excludeAnnotations ?? DEFAULT_EXCLUDED_ANNOTATIONS;
+  const excludePatterns = options?.excludePatterns ?? [];
+  const isMatch = excludePatterns.length > 0 ? picomatch(excludePatterns) : null;
+
   return rows.filter(row => {
     // Exclude always-excluded kinds
     if (EXCLUDED_KINDS.has(row.kind)) return false;
@@ -382,9 +394,12 @@ export function findDeadCode(
       if (mods.includes('public') && mods.includes('static') && mods.includes('final')) return false;
     }
 
+    // Exclude symbols from files matching exclude patterns
+    if (isMatch && isMatch(row.relative_path)) return false;
+
     // Exclude symbols with framework annotations
     const anns: string[] = row.annotations ? JSON.parse(row.annotations) : [];
-    if (anns.some(a => EXCLUDED_ANNOTATIONS.has(a))) return false;
+    if (anns.some(a => effectiveAnnotations.has(a))) return false;
 
     return true;
   });

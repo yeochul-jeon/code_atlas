@@ -20,6 +20,8 @@ import { extractFromJava } from './tree-sitter/java-extractor.js';
 export interface IndexOptions {
   incremental?: boolean;
   verbose?: boolean;
+  extensions?: string[];   // replaces SUPPORTED_EXTENSIONS when set
+  skipDirs?: string[];     // replaces ALWAYS_SKIP when set
 }
 
 export interface IndexResult {
@@ -32,12 +34,12 @@ export interface IndexResult {
 
 // ─── File collection ──────────────────────────────────────────────────────────
 
-const SUPPORTED_EXTENSIONS = new Set(['.java']);
-
-function collectFiles(dir: string): string[] {
+// Default: ['.java'] — overridable via IndexOptions.extensions
+function collectFiles(dir: string, extensions?: string[], skipDirs?: string[]): string[] {
   const result: string[] = [];
+  const supportedExts = new Set(extensions ?? ['.java']);
   // Directories skipped everywhere (tooling / hidden)
-  const ALWAYS_SKIP = new Set(['node_modules', 'build', 'target', '.gradle']);
+  const ALWAYS_SKIP = new Set(skipDirs ?? ['node_modules', 'build', 'target', '.gradle']);
   // Directories skipped only at the project root (IDE / Gradle build outputs).
   // Nested dirs named 'out' are valid package segments in hexagonal-arch projects
   // (e.g. adapter/out/, port/out/) and must not be excluded.
@@ -60,7 +62,7 @@ function collectFiles(dir: string): string[] {
       try { stat = statSync(full); } catch { continue; }
       if (stat.isDirectory()) {
         walk(full);
-      } else if (SUPPORTED_EXTENSIONS.has(full.slice(full.lastIndexOf('.')))) {
+      } else if (supportedExts.has(full.slice(full.lastIndexOf('.')))) {
         result.push(full);
       }
     }
@@ -159,7 +161,7 @@ export function indexProject(
   const { incremental = false, verbose = false } = options;
 
   const project = upsertProject(db, projectName, projectPath);
-  const files = collectFiles(projectPath);
+  const files = collectFiles(projectPath, options.extensions, options.skipDirs);
 
   let indexed = 0;
   let skipped = 0;

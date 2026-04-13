@@ -14,6 +14,7 @@ import {
   getFile,
   listProjectFiles,
   findDeadCode,
+  type DeadCodeOptions,
 } from '../storage/queries.js';
 import { formatDeadCodeResult } from './dead-code-formatter.js';
 import { replaceSymbolBody, insertAfterSymbol, insertBeforeSymbol, renameSymbol } from './write-tools.js';
@@ -21,6 +22,7 @@ import { Summarizer, getOrGenerateSummary } from '../summarizer/summarizer.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
+import { loadConfig } from '../config/loader.js';
 import { Embedder } from '../vectors/embedder.js';
 import { VectorStore } from '../vectors/vector-store.js';
 import { handleSemanticSearch } from '../vectors/semantic-search.js';
@@ -54,12 +56,12 @@ function readLines(filePath: string, start: number, end: number): string {
 
 // ─── MCP Server ───────────────────────────────────────────────────────────────
 
-export async function startMcpServer(dbPath: string, _httpPort?: number): Promise<void> {
+export async function startMcpServer(dbPath: string, _httpPort?: number, modelOverride?: string): Promise<void> {
   const db = openDatabase(dbPath);
   const server = new McpServer({ name: 'codeatlas', version: '0.1.0' });
 
   // AI summarizer — uses ANTHROPIC_API_KEY env var; lazy-init so server starts even without key
-  const DEFAULT_MODEL = 'claude-sonnet-4-6';
+  const DEFAULT_MODEL = modelOverride ?? 'claude-sonnet-4-6';
   let summarizer: Summarizer | null = null;
   function getSummarizer(): Summarizer {
     if (!summarizer) {
@@ -406,7 +408,14 @@ export async function startMcpServer(dbPath: string, _httpPort?: number): Promis
         return { content: [{ type: 'text', text: project ? `Project not found: ${project}` : 'No projects indexed yet.' }] };
       }
 
-      const allDead = projects.flatMap(p => findDeadCode(db, p.id, kind));
+      const allDead = projects.flatMap(p => {
+        const cfg = loadConfig(p.root_path);
+        const opts: DeadCodeOptions = {
+          excludeAnnotations: new Set(cfg.deadCode.excludeAnnotations),
+          excludePatterns: cfg.deadCode.excludePatterns,
+        };
+        return findDeadCode(db, p.id, kind, opts);
+      });
       const text = formatDeadCodeResult(allDead);
       return { content: [{ type: 'text', text }] };
     }

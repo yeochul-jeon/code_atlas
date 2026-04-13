@@ -1,12 +1,15 @@
 import { resolve } from 'path';
 import type { Db } from '../storage/database.js';
-import { listProjects, findDeadCode } from '../storage/queries.js';
+import { listProjects, findDeadCode, type DeadCodeOptions } from '../storage/queries.js';
 import { formatDeadCodeResult } from '../mcp/dead-code-formatter.js';
+
+export type { DeadCodeOptions };
 
 export function deadCodeAction(
   db: Db,
   project?: string,
   kind?: string,
+  options?: DeadCodeOptions,
 ): { output: string; exitCode: number } {
   const projects = listProjects(db);
 
@@ -18,9 +21,9 @@ export function deadCodeAction(
         exitCode: 1,
       };
     }
-    return { output: formatDeadCodeResult(findDeadCode(db, p.id, kind)), exitCode: 0 };
+    return { output: formatDeadCodeResult(findDeadCode(db, p.id, kind, options)), exitCode: 0 };
   }
 
-  const allDead = projects.flatMap(p => findDeadCode(db, p.id, kind));
+  const allDead = projects.flatMap(p => findDeadCode(db, p.id, kind, options));
   return { output: formatDeadCodeResult(allDead), exitCode: 0 };
 }
