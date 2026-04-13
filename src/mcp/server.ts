@@ -20,7 +20,10 @@ import { replaceSymbolBody, insertAfterSymbol, insertBeforeSymbol, renameSymbol 
 import { Summarizer, getOrGenerateSummary } from '../summarizer/summarizer.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { Embedder } from '../vectors/embedder.js';
+import { VectorStore } from '../vectors/vector-store.js';
+import { handleSemanticSearch } from '../vectors/semantic-search.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -63,6 +66,32 @@ export async function startMcpServer(dbPath: string, _httpPort?: number): Promis
       summarizer = new Summarizer(new Anthropic(), { modelVersion: DEFAULT_MODEL });
     }
     return summarizer;
+  }
+
+  // Vector search — lazy-init; null if `codeatlas embed` has not been run
+  let embedder: Embedder | null = null;
+  let vectorStore: VectorStore | null = null;
+  const vectorsPath = join(dirname(dbPath), 'vectors');
+
+  function getEmbedder(): Embedder {
+    if (!embedder) embedder = new Embedder();
+    return embedder;
+  }
+
+  async function getVectorStore(): Promise<VectorStore | null> {
+    if (vectorStore) return vectorStore;
+    try {
+      vectorStore = await VectorStore.open(vectorsPath);
+      return vectorStore;
+    } catch {
+      return null;
+    }
+  }
+
+  // Resolve project by name or path (shared helper for semantic_search)
+  function resolveProjectByName(name: string) {
+    const projects = listProjects(db);
+    return projects.find(p => p.name === name || p.root_path === name) ?? null;
   }
 
   // 1. list_projects
@@ -481,6 +510,29 @@ export async function startMcpServer(dbPath: string, _httpPort?: number): Promis
       const text = result.success
         ? `Successfully renamed '${symbol_name}' → '${new_name}'. Changed files:\n${result.changedFiles?.join('\n') ?? 'none'}`
         : `Error: ${result.error}`;
+      return { content: [{ type: 'text', text }] };
+    }
+  );
+
+  // ── Semantic search (vector) ─────────────────────────────────────────────────
+
+  server.tool(
+    'semantic_search',
+    'Search code by natural language meaning rather than exact keyword match. Requires embeddings to be generated first (run `codeatlas embed <project>`).',
+    {
+      query: z.string().describe('Natural language query, e.g. "authentication middleware" or "handles payment processing"'),
+      project: z.string().optional().describe('Filter by project name (from list_projects)'),
+      kind: z.enum(['file', 'symbol']).optional().default('file').describe('"file" searches file-level summaries; "symbol" searches class/interface/enum level'),
+      limit: z.number().int().positive().default(10).describe('Maximum number of results'),
+    },
+    async ({ query, project, kind, limit }) => {
+      const store = await getVectorStore();
+      const text = await handleSemanticSearch(
+        { query, project, kind, limit },
+        getEmbedder(),
+        store,
+        resolveProjectByName,
+      );
       return { content: [{ type: 'text', text }] };
     }
   );

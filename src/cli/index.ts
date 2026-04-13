@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { join, resolve, basename } from 'path';
+import { join, resolve, basename, dirname } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { openDatabase } from '../storage/database.js';
@@ -131,6 +131,38 @@ program
     const db = getDb();
     deleteProject(db, parseInt(id));
     console.log(`Project ${id} removed.`);
+  });
+
+// ─── embed ────────────────────────────────────────────────────────────────────
+
+program
+  .command('embed <project>')
+  .description('Generate vector embeddings for semantic search')
+  .option('-v, --verbose', 'Show per-file progress', false)
+  .action(async (project: string, opts: { verbose: boolean }) => {
+    const db = getDb();
+    const projects = listProjects(db);
+    const p = projects.find(x => x.name === project || x.root_path === resolve(project));
+    if (!p) {
+      console.error(`Project not found: "${project}". Use: codeatlas list`);
+      process.exit(1);
+    }
+
+    const { Embedder } = await import('../vectors/embedder.js');
+    const { VectorStore } = await import('../vectors/vector-store.js');
+    const { embedProject } = await import('../vectors/embed-pipeline.js');
+
+    const embedder = new Embedder();
+    const vectorsPath = join(dirname(DB_PATH), 'vectors');
+    const vectorStore = await VectorStore.open(vectorsPath);
+
+    console.log(`Embedding "${p.name}" (this may take a moment on first run — model download ~23MB)...`);
+    const result = await embedProject(db, p.id, embedder, vectorStore, { verbose: opts.verbose });
+
+    console.log(`\nDone in ${result.durationMs}ms`);
+    console.log(`  files   : ${result.filesEmbedded}`);
+    console.log(`  symbols : ${result.symbolsEmbedded}`);
+    console.log(`\nRestart the MCP server to make semantic_search available.`);
   });
 
 program.parse();

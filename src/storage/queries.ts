@@ -289,6 +289,22 @@ export function upsertSummary(
   `).run(fileId, symbolId, content, new Date().toISOString(), modelVersion);
 }
 
+/**
+ * List all files in a project, joined with their file-level AI summary (if any).
+ * Used by the embedding pipeline to build rich composite documents.
+ */
+export function listFilesWithSummaries(
+  db: Db,
+  projectId: number,
+): Array<FileRecord & { summary_content: string | null }> {
+  return db.prepare(`
+    SELECT f.*, s.content AS summary_content
+    FROM files f
+    LEFT JOIN summaries s ON s.file_id = f.id AND s.symbol_id IS NULL
+    WHERE f.project_id = ?
+  `).all(projectId) as Array<FileRecord & { summary_content: string | null }>;
+}
+
 // ─── Dead Code Detection ──────────────────────────────────────────────────────
 
 // Annotations that mark a symbol as "live" (cannot be dead code).
