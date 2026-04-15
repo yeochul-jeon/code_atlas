@@ -2,6 +2,22 @@
 import picomatch from 'picomatch';
 import type { Db } from './database.js';
 
+// ─── Prepared statement cache ─────────────────────────────────────────────────
+// better-sqlite3 준비된 statement는 단일 프로세스에서 재사용 안전.
+// db.prepare()를 매 호출마다 실행하면 800K+ 회 wrapper 객체가 생성되므로
+// WeakMap으로 캐시하여 prepare 횟수를 최소화.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type StmtBucket = Record<string, any>;
+const stmtCache = new WeakMap<Db, StmtBucket>();
+// better-sqlite3 Statement의 .run()/.get() 시그니처가 rest vs 단일 배열 사이에서 버전마다 다르므로
+// any를 반환하여 호출 측에서 유연하게 사용.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function cached(db: Db, key: string, sql: string): any {
+  let bucket = stmtCache.get(db);
+  if (!bucket) { bucket = {}; stmtCache.set(db, bucket); }
+  return (bucket[key] ??= db.prepare(sql));
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface Project {
@@ -90,19 +106,19 @@ export function upsertFile(
   relativePath: string,
   contentHash: string
 ): FileRecord {
-  db.prepare(`
+  cached(db, 'upsertFile', `
     INSERT INTO files (project_id, relative_path, content_hash, last_indexed_at)
     VALUES (?, ?, ?, ?)
     ON CONFLICT(project_id, relative_path) DO UPDATE SET
       content_hash    = excluded.content_hash,
       last_indexed_at = excluded.last_indexed_at
   `).run(projectId, relativePath, contentHash, new Date().toISOString());
-  return db.prepare('SELECT * FROM files WHERE project_id = ? AND relative_path = ?')
+  return cached(db, 'getFileByPath', 'SELECT * FROM files WHERE project_id = ? AND relative_path = ?')
     .get(projectId, relativePath) as FileRecord;
 }
 
 export function getFile(db: Db, projectId: number, relativePath: string): FileRecord | undefined {
-  return db.prepare('SELECT * FROM files WHERE project_id = ? AND relative_path = ?')
+  return cached(db, 'getFileByPath', 'SELECT * FROM files WHERE project_id = ? AND relative_path = ?')
     .get(projectId, relativePath) as FileRecord | undefined;
 }
 
@@ -130,7 +146,7 @@ export interface InsertSymbolParams {
 }
 
 export function insertSymbol(db: Db, p: InsertSymbolParams): number {
-  const result = db.prepare(`
+  const result = cached(db, 'insertSymbol', `
     INSERT INTO symbols (file_id, name, kind, signature, parent_id, start_line, end_line, modifiers, annotations)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
@@ -198,7 +214,7 @@ export function searchSymbolsFts(
 // ─── Dependencies ─────────────────────────────────────────────────────────────
 
 export function insertDependency(db: Db, sourceFileId: number, targetFqn: string, kind: string): void {
-  db.prepare('INSERT INTO dependencies (source_file_id, target_fqn, kind) VALUES (?, ?, ?)')
+  cached(db, 'insertDependency', 'INSERT INTO dependencies (source_file_id, target_fqn, kind) VALUES (?, ?, ?)')
     .run(sourceFileId, targetFqn, kind);
 }
 
@@ -215,7 +231,7 @@ export function insertRef(
   kind: string,
   calleeName?: string | null
 ): void {
-  db.prepare('INSERT INTO refs (source_symbol_id, target_symbol_id, kind, callee_name) VALUES (?, ?, ?, ?)')
+  cached(db, 'insertRef', 'INSERT INTO refs (source_symbol_id, target_symbol_id, kind, callee_name) VALUES (?, ?, ?, ?)')
     .run(sourceSymbolId, targetSymbolId, kind, calleeName ?? null);
 }
 
@@ -229,41 +245,26 @@ export function getRefsByTargetSymbol(db: Db, targetSymbolId: number): SymbolRef
  * match only (no FQN resolution). Updates refs in-place.
  */
 export function resolveProjectRefs(db: Db, projectId: number): void {
-  // Build a name → symbol id map for all symbols in this project
-  const symbolRows = db.prepare(`
-    SELECT s.id, s.name
-    FROM symbols s
-    JOIN files f ON s.file_id = f.id
-    WHERE f.project_id = ?
-  `).all(projectId) as { id: number; name: string }[];
-
-  const nameToId = new Map<string, number>();
-  for (const row of symbolRows) {
-    // Last writer wins for duplicate names; good enough for best-effort resolution
-    nameToId.set(row.name, row.id);
-  }
-
-  // Fetch all unresolved refs (callee_name set, target_symbol_id null)
-  const unresolved = db.prepare(`
-    SELECT r.id, r.callee_name
-    FROM refs r
-    JOIN symbols s ON r.source_symbol_id = s.id
-    JOIN files f ON s.file_id = f.id
-    WHERE f.project_id = ?
-      AND r.target_symbol_id IS NULL
-      AND r.callee_name IS NOT NULL
-  `).all(projectId) as { id: number; callee_name: string }[];
-
-  const update = db.prepare('UPDATE refs SET target_symbol_id = ? WHERE id = ?');
-  const resolveAll = db.transaction(() => {
-    for (const ref of unresolved) {
-      const targetId = nameToId.get(ref.callee_name);
-      if (targetId !== undefined) {
-        update.run(targetId, ref.id);
-      }
-    }
-  });
-  resolveAll();
+  // JS 힙을 거치지 않고 SQLite 안에서 매칭/업데이트.
+  // 중복 이름은 MAX(s.id) → "last writer wins" (기존 JS Map 시맨틱 보존).
+  // 기존 인덱스 idx_symbols_name, idx_refs_target 활용.
+  db.prepare(`
+    UPDATE refs
+    SET target_symbol_id = (
+      SELECT MAX(s.id)
+      FROM symbols s
+      JOIN files f ON s.file_id = f.id
+      WHERE f.project_id = ?
+        AND s.name = refs.callee_name
+    )
+    WHERE target_symbol_id IS NULL
+      AND callee_name IS NOT NULL
+      AND source_symbol_id IN (
+        SELECT s.id FROM symbols s
+        JOIN files f ON s.file_id = f.id
+        WHERE f.project_id = ?
+      )
+  `).run(projectId, projectId);
 }
 
 // ─── Summaries ────────────────────────────────────────────────────────────────

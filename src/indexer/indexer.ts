@@ -22,6 +22,7 @@ export interface IndexOptions {
   verbose?: boolean;
   extensions?: string[];   // replaces SUPPORTED_EXTENSIONS when set
   skipDirs?: string[];     // replaces ALWAYS_SKIP when set
+  batchSize?: number;      // files per SQLite transaction (default 100)
 }
 
 export interface IndexResult {
@@ -95,58 +96,63 @@ function indexFile(db: Db, projectId: number, absolutePath: string, relativePath
   const tree = parseFile(absolutePath, source);
   if (!tree) return;
 
-  let extraction;
-  if (lang === 'java') {
-    extraction = extractFromJava(tree);
-  } else {
-    return;
-  }
-
-  // Insert symbols (track local id → DB id for parent references)
-  const idMap = new Map<number, number>();
-
-  for (const sym of extraction.symbols) {
-    const localId = (sym as { _nodeId?: number })._nodeId;
-    const parentDbId = sym.parent_id !== null && sym.parent_id !== undefined
-      ? (idMap.get(sym.parent_id) ?? null)
-      : null;
-
-    const dbId = insertSymbol(db, {
-      file_id: file.id,
-      name: sym.name,
-      kind: sym.kind,
-      signature: sym.signature,
-      parent_id: parentDbId,
-      start_line: sym.start_line,
-      end_line: sym.end_line,
-      modifiers: sym.modifiers ?? undefined,
-      annotations: sym.annotations ?? undefined,
-    });
-
-    if (localId !== undefined) idMap.set(localId, dbId);
-  }
-
-  for (const dep of extraction.dependencies) {
-    insertDependency(db, file.id, dep.targetFqn, dep.kind);
-  }
-
-  // Refs: resolve callee names to symbol IDs where possible (best-effort, same-file only)
-  // Build a name → DB id map for quick lookup
-  const nameToDbId = new Map<string, number>();
-  for (const sym of extraction.symbols) {
-    const localId = (sym as { _nodeId?: number })._nodeId;
-    if (localId !== undefined) {
-      const dbId = idMap.get(localId);
-      if (dbId !== undefined) nameToDbId.set(sym.name, dbId);
+  try {
+    let extraction;
+    if (lang === 'java') {
+      extraction = extractFromJava(tree);
+    } else {
+      return;
     }
-  }
 
-  for (const ref of extraction.refs) {
-    const srcDbId = nameToDbId.get(ref.callerName) ?? null;
-    const tgtDbId = nameToDbId.get(ref.calleeName) ?? null;
-    // Store callee_name for unresolved refs so resolveProjectRefs can match cross-file
-    const calleeName = tgtDbId === null ? ref.calleeName : null;
-    insertRef(db, srcDbId, tgtDbId, ref.kind, calleeName);
+    // Insert symbols (track local id → DB id for parent references)
+    const idMap = new Map<number, number>();
+
+    for (const sym of extraction.symbols) {
+      const localId = (sym as { _nodeId?: number })._nodeId;
+      const parentDbId = sym.parent_id !== null && sym.parent_id !== undefined
+        ? (idMap.get(sym.parent_id) ?? null)
+        : null;
+
+      const dbId = insertSymbol(db, {
+        file_id: file.id,
+        name: sym.name,
+        kind: sym.kind,
+        signature: sym.signature,
+        parent_id: parentDbId,
+        start_line: sym.start_line,
+        end_line: sym.end_line,
+        modifiers: sym.modifiers ?? undefined,
+        annotations: sym.annotations ?? undefined,
+      });
+
+      if (localId !== undefined) idMap.set(localId, dbId);
+    }
+
+    for (const dep of extraction.dependencies) {
+      insertDependency(db, file.id, dep.targetFqn, dep.kind);
+    }
+
+    // Refs: resolve callee names to symbol IDs where possible (best-effort, same-file only)
+    // Build a name → DB id map for quick lookup
+    const nameToDbId = new Map<string, number>();
+    for (const sym of extraction.symbols) {
+      const localId = (sym as { _nodeId?: number })._nodeId;
+      if (localId !== undefined) {
+        const dbId = idMap.get(localId);
+        if (dbId !== undefined) nameToDbId.set(sym.name, dbId);
+      }
+    }
+
+    for (const ref of extraction.refs) {
+      const srcDbId = nameToDbId.get(ref.callerName) ?? null;
+      const tgtDbId = nameToDbId.get(ref.calleeName) ?? null;
+      // Store callee_name for unresolved refs so resolveProjectRefs can match cross-file
+      const calleeName = tgtDbId === null ? ref.calleeName : null;
+      insertRef(db, srcDbId, tgtDbId, ref.kind, calleeName);
+    }
+  } finally {
+    // tree-sitter Tree는 V8 GC와 별개의 native heap 사용 — 명시 해제로 native 메모리 즉시 반환
+    (tree as unknown as { delete?: () => void }).delete?.();
   }
 }
 
@@ -160,6 +166,7 @@ export function indexProject(
 ): IndexResult {
   const start = Date.now();
   const { incremental = false, verbose = false } = options;
+  const batchSize = options.batchSize ?? 10;
 
   const project = upsertProject(db, projectName, projectPath);
   const files = collectFiles(projectPath, options.extensions, options.skipDirs);
@@ -169,30 +176,33 @@ export function indexProject(
   let errors = 0;
   const errorPaths: string[] = [];
 
-  const indexOne = db.transaction((absPath: string) => {
-    const rel = relative(projectPath, absPath);
-    try {
-      if (incremental) {
-        const source = readFileSync(absPath, 'utf8');
-        const hash = sha256(source);
-        const existing = getFile(db, project.id, rel);
-        if (existing?.content_hash === hash) {
-          skipped++;
-          return;
+  // N개 파일을 하나의 트랜잭션으로 묶어 commit 횟수 감소 (46K → ~470회)
+  const indexBatch = db.transaction((batch: string[]) => {
+    for (const absPath of batch) {
+      const rel = relative(projectPath, absPath);
+      try {
+        if (incremental) {
+          const source = readFileSync(absPath, 'utf8');
+          const hash = sha256(source);
+          const existing = getFile(db, project.id, rel);
+          if (existing?.content_hash === hash) {
+            skipped++;
+            continue;
+          }
         }
+        indexFile(db, project.id, absPath, rel);
+        indexed++;
+        if (verbose) process.stderr.write(`  indexed: ${rel}\n`);
+      } catch (err) {
+        errors++;
+        errorPaths.push(rel);
+        process.stderr.write(`  error: ${rel} — ${(err as Error).message}\n`);
       }
-      indexFile(db, project.id, absPath, rel);
-      indexed++;
-      if (verbose) process.stderr.write(`  indexed: ${rel}\n`);
-    } catch (err) {
-      errors++;
-      errorPaths.push(rel);
-      process.stderr.write(`  error: ${rel} — ${(err as Error).message}\n`);
     }
   });
 
-  for (const f of files) {
-    indexOne(f);
+  for (let i = 0; i < files.length; i += batchSize) {
+    indexBatch(files.slice(i, i + batchSize));
   }
 
   touchProjectIndexed(db, project.id);
