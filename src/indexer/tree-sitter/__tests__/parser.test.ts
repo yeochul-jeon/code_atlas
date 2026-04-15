@@ -54,4 +54,43 @@ public class Hello {
     expect(parseFile('Hello.kt', simpleJava)).toBeNull();
     expect(parseFile('hello.py', simpleJava)).toBeNull();
   });
+
+  it('parses CRLF (\\r\\n) Java source without error', () => {
+    const crlfSource = simpleJava.replace(/\n/g, '\r\n');
+    const tree = parseFile('Hello.java', crlfSource);
+    expect(tree).not.toBeNull();
+    expect(tree?.rootNode.type).toBe('program');
+  });
+
+  it('parses CR-only (\\r) Java source without error', () => {
+    const crSource = simpleJava.replace(/\n/g, '\r');
+    const tree = parseFile('Hello.java', crSource);
+    expect(tree).not.toBeNull();
+    expect(tree?.rootNode.type).toBe('program');
+  });
+
+  it('parses Java source with UTF-8 BOM without error', () => {
+    const bomSource = '\uFEFF' + simpleJava;
+    const tree = parseFile('Hello.java', bomSource);
+    expect(tree).not.toBeNull();
+    expect(tree?.rootNode.type).toBe('program');
+  });
+
+  it('parses Java source with both BOM and CRLF without error', () => {
+    const bothSource = '\uFEFF' + simpleJava.replace(/\n/g, '\r\n');
+    const tree = parseFile('Hello.java', bothSource);
+    expect(tree).not.toBeNull();
+    expect(tree?.rootNode.type).toBe('program');
+  });
+
+  it('parses a Java file exceeding 32,767 chars (tree-sitter 0.21.x limit)', () => {
+    // tree-sitter 0.21.x native binding fails with "Invalid argument" for strings ≥ 32,768 chars.
+    // The callback API must be used for large files.
+    const padding = '// line\n'.repeat(4200); // ~4200 * 8 = 33,600 chars
+    const largeSource = `public class Large {\n${padding}  void noop() {}\n}`;
+    expect(largeSource.length).toBeGreaterThan(32767);
+    const tree = parseFile('Large.java', largeSource);
+    expect(tree).not.toBeNull();
+    expect(tree?.rootNode.type).toBe('program');
+  });
 });

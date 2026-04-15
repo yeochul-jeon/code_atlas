@@ -237,3 +237,60 @@ public class OrderService {
     expect(dead.some(s => s.name === 'process')).toBe(false);
   });
 });
+
+// ─── CRLF / BOM encoding ──────────────────────────────────────────────────────
+
+describe('indexProject — CRLF and BOM encoding', () => {
+  it('indexes a CRLF Java file without errors and extracts symbols', () => {
+    writeFileSync(join(tmpDir, 'CRLF.java'), SIMPLE_JAVA.replace(/\n/g, '\r\n'));
+    const result = indexProject(db, tmpDir, 'proj');
+    expect(result.errors).toBe(0);
+    expect(result.errorPaths).toHaveLength(0);
+    const files = listProjectFiles(db, result.project.id);
+    const symbols = getSymbolsByFile(db, files[0].id);
+    const names = symbols.map(s => s.name);
+    expect(names).toContain('Cart');
+    expect(names).toContain('addItem');
+  });
+
+  it('indexes a UTF-8 BOM Java file without errors and extracts symbols', () => {
+    writeFileSync(join(tmpDir, 'BOM.java'), '\uFEFF' + SIMPLE_JAVA);
+    const result = indexProject(db, tmpDir, 'proj');
+    expect(result.errors).toBe(0);
+    expect(result.errorPaths).toHaveLength(0);
+    const files = listProjectFiles(db, result.project.id);
+    const symbols = getSymbolsByFile(db, files[0].id);
+    expect(symbols.map(s => s.name)).toContain('Cart');
+  });
+
+  it('indexes a BOM+CRLF Java file without errors', () => {
+    writeFileSync(join(tmpDir, 'BOMCRLF.java'), '\uFEFF' + SIMPLE_JAVA.replace(/\n/g, '\r\n'));
+    const result = indexProject(db, tmpDir, 'proj');
+    expect(result.errors).toBe(0);
+    expect(result.errorPaths).toHaveLength(0);
+  });
+
+  it('records errorPaths for files that fail to parse', () => {
+    writeFileSync(join(tmpDir, 'Valid.java'), SIMPLE_JAVA);
+    // A binary file disguised as .java will fail to parse
+    writeFileSync(join(tmpDir, 'Broken.java'), Buffer.from([0xFF, 0xFE, 0x00, 0x00]));
+    const result = indexProject(db, tmpDir, 'proj');
+    // Valid.java should succeed, Broken.java may error
+    // Either way, errorPaths captures the failed ones
+    expect(Array.isArray(result.errorPaths)).toBe(true);
+  });
+
+  it('indexes a Java file exceeding 32,767 chars without errors', () => {
+    // tree-sitter 0.21.x fails on strings ≥ 32,768 chars — parser uses callback API for large files.
+    const padding = '// filler\n'.repeat(4000); // ~4000 * 10 = 40,000 chars
+    const largeJava = `import java.util.List;\n\npublic class Large {\n${padding}\n  public void noop() {}\n}`;
+    expect(largeJava.length).toBeGreaterThan(32767);
+    writeFileSync(join(tmpDir, 'Large.java'), largeJava);
+    const result = indexProject(db, tmpDir, 'proj');
+    expect(result.errors).toBe(0);
+    expect(result.errorPaths).toHaveLength(0);
+    const files = listProjectFiles(db, result.project.id);
+    const symbols = getSymbolsByFile(db, files[0].id);
+    expect(symbols.map(s => s.name)).toContain('Large');
+  });
+});

@@ -29,6 +29,7 @@ export interface IndexResult {
   indexed: number;
   skipped: number;
   errors: number;
+  errorPaths: string[];
   durationMs: number;
 }
 
@@ -166,6 +167,7 @@ export function indexProject(
   let indexed = 0;
   let skipped = 0;
   let errors = 0;
+  const errorPaths: string[] = [];
 
   const indexOne = db.transaction((absPath: string) => {
     const rel = relative(projectPath, absPath);
@@ -184,6 +186,7 @@ export function indexProject(
       if (verbose) process.stderr.write(`  indexed: ${rel}\n`);
     } catch (err) {
       errors++;
+      errorPaths.push(rel);
       process.stderr.write(`  error: ${rel} — ${(err as Error).message}\n`);
     }
   });
@@ -202,6 +205,7 @@ export function indexProject(
     indexed,
     skipped,
     errors,
+    errorPaths,
     durationMs: Date.now() - start,
   };
 }

@@ -57,6 +57,14 @@ program
     console.log(`  indexed : ${result.indexed}`);
     console.log(`  skipped : ${result.skipped}`);
     console.log(`  errors  : ${result.errors}`);
+    if (opts.verbose && result.errorPaths.length > 0) {
+      const shown = result.errorPaths.slice(0, 20);
+      console.log(`\n  Failed files (first ${shown.length}):`);
+      shown.forEach(p => console.log(`    ${p}`));
+      if (result.errorPaths.length > 20) {
+        console.log(`    ... and ${result.errorPaths.length - 20} more`);
+      }
+    }
   });
 
 // ─── serve ────────────────────────────────────────────────────────────────────
