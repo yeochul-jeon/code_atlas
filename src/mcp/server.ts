@@ -18,6 +18,17 @@ import {
 } from '../storage/queries.js';
 import { formatDeadCodeResult } from './dead-code-formatter.js';
 import { replaceSymbolBody, insertAfterSymbol, insertBeforeSymbol, renameSymbol } from './write-tools.js';
+import {
+  handleWriteMemory,
+  handleReadMemory,
+  handleListMemories,
+  handleEditMemory,
+  handleDeleteMemory,
+  formatMemory,
+  formatMemoryList,
+  type Memory,
+  type MemoryMeta,
+} from './memory-tools.js';
 import { Summarizer, getOrGenerateSummary } from '../summarizer/summarizer.js';
 import Anthropic from '@anthropic-ai/sdk';
 import { readFileSync, existsSync } from 'fs';
@@ -657,6 +668,92 @@ export async function startMcpServer(dbPath: string, _httpPort?: number, modelOv
         ...results.map(r => `[${r.kind}] ${r.name}\n  ${r.filePath}`),
       ];
       return { content: [{ type: 'text', text: lines.join('\n') }] };
+    },
+  );
+
+  // 20. write_memory
+  server.tool(
+    'write_memory',
+    'Write a project-level knowledge note (memory) as a Markdown file in <project-root>/.codeatlas/memories/. ' +
+    'Use this to persist architectural decisions, coding conventions, key entry points, or any cross-session knowledge. ' +
+    'The slug (filename) is derived from the title.',
+    {
+      project: z.string().describe('Project name or absolute path'),
+      title: z.string().describe('Memory title — used to generate the filename (slug)'),
+      content: z.string().describe('Markdown content for the memory'),
+      tags: z.array(z.string()).optional().describe('Optional tags for categorization (e.g. ["onboarding", "architecture"])'),
+    },
+    ({ project, title, content, tags }) => {
+      const result = handleWriteMemory(db, { project, title, content, tags });
+      if (!result.ok) return { content: [{ type: 'text', text: `Error: ${result.error}` }] };
+      return { content: [{ type: 'text', text: result.message }] };
+    },
+  );
+
+  // 21. read_memory
+  server.tool(
+    'read_memory',
+    'Read a single memory file by slug from <project-root>/.codeatlas/memories/. ' +
+    'Use list_memories first to discover available slugs.',
+    {
+      project: z.string().describe('Project name or absolute path'),
+      slug: z.string().describe('Memory filename without .md extension (e.g. "project-overview")'),
+    },
+    ({ project, slug }) => {
+      const result = handleReadMemory(db, { project, slug });
+      if (!result.ok) return { content: [{ type: 'text', text: `Error: ${result.error}` }] };
+      const text = formatMemory(result.data as Memory);
+      return { content: [{ type: 'text', text }] };
+    },
+  );
+
+  // 22. list_memories
+  server.tool(
+    'list_memories',
+    'List all memory files for a project. Returns slug, title, tags, and last-updated timestamps. ' +
+    'Filter by tag to find specific categories of knowledge.',
+    {
+      project: z.string().describe('Project name or absolute path'),
+      tag: z.string().optional().describe('Filter by tag (e.g. "onboarding")'),
+    },
+    ({ project, tag }) => {
+      const result = handleListMemories(db, { project, tag });
+      if (!result.ok) return { content: [{ type: 'text', text: `Error: ${result.error}` }] };
+      const text = formatMemoryList(result.data as MemoryMeta[]);
+      return { content: [{ type: 'text', text }] };
+    },
+  );
+
+  // 23. edit_memory
+  server.tool(
+    'edit_memory',
+    'Edit the content of an existing memory file. The updated_at timestamp is bumped automatically. ' +
+    'New tags are merged with existing tags (no duplicates). To replace content entirely, pass the full new content.',
+    {
+      project: z.string().describe('Project name or absolute path'),
+      slug: z.string().describe('Memory filename without .md extension'),
+      content: z.string().describe('New Markdown content (replaces existing body)'),
+      tags: z.array(z.string()).optional().describe('Additional tags to merge into the memory'),
+    },
+    ({ project, slug, content, tags }) => {
+      const result = handleEditMemory(db, { project, slug, content, tags });
+      if (!result.ok) return { content: [{ type: 'text', text: `Error: ${result.error}` }] };
+      return { content: [{ type: 'text', text: result.message }] };
+    },
+  );
+
+  // 24. delete_memory
+  server.tool(
+    'delete_memory',
+    'Delete a memory file by slug. This action is permanent.',
+    {
+      project: z.string().describe('Project name or absolute path'),
+      slug: z.string().describe('Memory filename without .md extension'),
+    },
+    ({ project, slug }) => {
+      const result = handleDeleteMemory(db, { project, slug });
+      if (!result.ok) return { content: [{ type: 'text', text: `Error: ${result.error}` }] };
+      return { content: [{ type: 'text', text: result.message }] };
     },
   );
 

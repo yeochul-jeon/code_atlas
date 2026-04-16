@@ -16,6 +16,11 @@ export interface CodeAtlasConfig {
   summaries: {
     model: string;
   };
+  memory: {
+    enabled: boolean;
+    path: string;      // relative to project root
+    autoOnboard: boolean;
+  };
 }
 
 export const DEFAULT_EXTENSIONS: string[] = [
@@ -44,6 +49,8 @@ export const DEFAULT_EXCLUDED_ANNOTATIONS: string[] = [
 
 export const DEFAULT_MODEL = 'claude-sonnet-4-6';
 
+export const DEFAULT_MEMORY_PATH = '.codeatlas/memories';
+
 function defaultConfig(): CodeAtlasConfig {
   return {
     indexer: {
@@ -57,6 +64,11 @@ function defaultConfig(): CodeAtlasConfig {
     },
     summaries: {
       model: DEFAULT_MODEL,
+    },
+    memory: {
+      enabled: true,
+      path: DEFAULT_MEMORY_PATH,
+      autoOnboard: true,
     },
   };
 }
@@ -139,9 +151,25 @@ export function loadConfig(projectPath: string): CodeAtlasConfig {
       ? summariesRaw['model']
       : DEFAULT_MODEL;
 
+  // --- memory section ---
+  const memoryRaw = toRecord(yaml['memory']);
+  const memoryEnabled =
+    memoryRaw && typeof memoryRaw['enabled'] === 'boolean'
+      ? memoryRaw['enabled']
+      : true;
+  const memoryPath =
+    memoryRaw && typeof memoryRaw['path'] === 'string'
+      ? memoryRaw['path']
+      : DEFAULT_MEMORY_PATH;
+  const autoOnboard =
+    memoryRaw && typeof memoryRaw['auto_onboard'] === 'boolean'
+      ? memoryRaw['auto_onboard']
+      : true;
+
   return {
     indexer: { extensions, skipDirs },
     deadCode: { excludeAnnotations, replaceAnnotations, excludePatterns },
     summaries: { model },
+    memory: { enabled: memoryEnabled, path: memoryPath, autoOnboard },
   };
 }

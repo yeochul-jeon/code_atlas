@@ -9,6 +9,7 @@ import {
   DEFAULT_SKIP_DIRS,
   DEFAULT_EXCLUDED_ANNOTATIONS,
   DEFAULT_MODEL,
+  DEFAULT_MEMORY_PATH,
 } from '../loader.js';
 
 let tmpDir: string;
@@ -105,6 +106,46 @@ dead_code:
     const config = loadConfig(tmpDir);
     expect(config.deadCode.excludeAnnotations).toEqual(['@CustomEntry']);
     expect(config.deadCode.excludeAnnotations).not.toContain('@RestController');
+  });
+
+  // Cycle A7: memory defaults
+  it('returns memory defaults when no memory section in YAML', () => {
+    const config = loadConfig(tmpDir);
+    expect(config.memory.enabled).toBe(true);
+    expect(config.memory.path).toBe(DEFAULT_MEMORY_PATH);
+    expect(config.memory.autoOnboard).toBe(true);
+  });
+
+  // Cycle A8: memory custom config
+  it('parses memory section from YAML', () => {
+    writeFileSync(
+      join(tmpDir, '.codeatlas.yaml'),
+      `
+memory:
+  enabled: false
+  path: .my-memories
+  auto_onboard: false
+`,
+    );
+    const config = loadConfig(tmpDir);
+    expect(config.memory.enabled).toBe(false);
+    expect(config.memory.path).toBe('.my-memories');
+    expect(config.memory.autoOnboard).toBe(false);
+  });
+
+  // Cycle A9: partial memory config → defaults for missing fields
+  it('fills memory defaults for partially-specified memory section', () => {
+    writeFileSync(
+      join(tmpDir, '.codeatlas.yaml'),
+      `
+memory:
+  enabled: false
+`,
+    );
+    const config = loadConfig(tmpDir);
+    expect(config.memory.enabled).toBe(false);
+    expect(config.memory.path).toBe(DEFAULT_MEMORY_PATH);
+    expect(config.memory.autoOnboard).toBe(true);
   });
 
   // Cycle A6: Invalid YAML → defaults + stderr warning
