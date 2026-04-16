@@ -542,6 +542,73 @@ codeatlas memories onboard <project>
 > write_memory로 새로 알게 된 패턴을 기록해줘.
 ```
 
+### 팀 공유 (Git 커밋 패턴) ✨ 권장
+
+`.codeatlas/memories/` 디렉토리는 **프로젝트 루트에 저장되므로 git으로 바로 공유 가능**합니다. 인프라 추가 0개로 팀원·AI 에이전트 간 지식을 동기화하는 가장 단순한 방법입니다.
+
+#### 1) 커밋 대상에 포함
+
+```bash
+# 프로젝트 루트에서
+git add .codeatlas/memories/
+git commit -m "docs(memories): 온보딩 메모리 4종 추가"
+git push
+```
+
+#### 2) `.gitignore` 예시
+
+메모리는 커밋하되 인덱스·벡터·그래프 등 로컬 캐시는 제외합니다:
+
+```gitignore
+# 공유: 메모리 (사람·AI가 쓴 지식)
+!.codeatlas/memories/
+
+# 로컬 전용: 캐시 (git 제외)
+.codeatlas/index.db
+.codeatlas/vectors/
+.codeatlas/graph.kuzu
+.codeatlas/*.log
+```
+
+> `.codeatlas/` 전체를 ignore 했다면 `!.codeatlas/memories/` 예외 규칙으로 메모리만 복구.
+
+#### 3) 팀 컨벤션 제안
+
+| 항목 | 권장 |
+|------|------|
+| **커밋 분리** | 코드 변경 커밋과 메모리 커밋을 분리 (`docs(memories): ...` 타입) |
+| **PR 리뷰** | 메모리 변경도 PR로 리뷰 (잘못된 지식 전파 방지) |
+| **슬러그 규칙** | 소문자 + 하이픈 (예: `payment-flow`, `retry-policy`) |
+| **프라이버시** | 메모리 본문에 비밀·토큰·사내 URL 기재 금지 |
+| **AI 자동 생성물 검수** | `onboarding` 생성 후 최소 1인이 리뷰 후 커밋 |
+
+#### 4) CI 검증 (선택)
+
+메모리 프론트매터 유효성을 CI에서 검증:
+
+```yaml
+# .github/workflows/memories-check.yml
+name: memories-check
+on: { pull_request: { paths: [".codeatlas/memories/**"] } }
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm install -g codeatlas
+      - run: codeatlas memories list .   # 파싱 실패 시 비 0 종료
+```
+
+#### 5) 언제 이 방식만으로 충분한가
+
+- 팀 규모가 **수십 명 이하** 이고
+- 공유 대상이 **사람이 쓴 지식 + AI 온보딩 결과** 정도이며
+- **요약·임팩트 분석 등 파생 결과**는 각자 재생성해도 부담 없는 경우
+
+이 조건을 벗어나면 Phase 1–2의 **공용 지식 저장소(Graphiti + Neo4j) 연동**을 검토하세요. 자세한 내용은 `docs/architecture/remote-sync.md` (Phase 1 산출물) 참조.
+
 ---
 
 ## 11. 워크플로우 예시
