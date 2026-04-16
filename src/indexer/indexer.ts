@@ -1,10 +1,12 @@
 import { createHash } from 'crypto';
+import { execSync } from 'child_process';
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join, relative } from 'path';
 import type { Db } from '../storage/database.js';
 import {
   upsertProject,
   touchProjectIndexed,
+  updateProjectFingerprint,
   upsertFile,
   getFile,
   deleteFileData,
@@ -80,6 +82,32 @@ function collectFiles(dir: string, extensions?: string[], skipDirs?: string[]): 
 
 function sha256(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex');
+}
+
+/**
+ * 프로젝트 핑거프린트 계산.
+ * git 리포: `git rev-parse HEAD` 결과 (40자 SHA)
+ * non-git 프로젝트 fallback: 모든 파일의 content_hash를 정렬·연결한 sha256
+ * 핑거프린트는 Graphiti group_id의 버전 식별자로 사용된다.
+ */
+function computeFingerprint(projectPath: string, db: Db, projectId: number): string {
+  try {
+    const sha = execSync('git rev-parse HEAD', {
+      cwd: projectPath,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (/^[0-9a-f]{40}$/.test(sha)) return sha;
+  } catch {
+    // not a git repo or git not available — fall through to rollup
+  }
+
+  const files = listProjectFiles(db, projectId);
+  const rollup = files
+    .map(f => f.content_hash ?? '')
+    .sort()
+    .join('\n');
+  return sha256(rollup);
 }
 
 // ─── Single-file indexing ─────────────────────────────────────────────────────
@@ -221,6 +249,10 @@ export function indexProject(
 
   // Resolve cross-file references using the fully indexed project symbol table
   resolveProjectRefs(db, project.id);
+
+  // Compute and persist project fingerprint for remote sync group_id
+  const fingerprint = computeFingerprint(projectPath, db, project.id);
+  updateProjectFingerprint(db, project.id, fingerprint);
 
   return {
     project: { id: project.id, name: project.name },

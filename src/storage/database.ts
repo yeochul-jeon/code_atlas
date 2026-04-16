@@ -4,7 +4,7 @@ import { dirname } from 'path';
 
 export type Db = Database.Database;
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS projects (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT    NOT NULL,
   root_path   TEXT    NOT NULL UNIQUE,
-  last_indexed_at TEXT
+  last_indexed_at TEXT,
+  fingerprint TEXT
 );
 
 CREATE TABLE IF NOT EXISTS files (
@@ -139,6 +140,10 @@ function applySchema(db: Db): void {
     if (current < 2) {
       // v1 → v2: add callee_name column to refs for cross-file resolution
       db.exec('ALTER TABLE refs ADD COLUMN callee_name TEXT');
+    }
+    if (current < 3) {
+      // v2 → v3: add fingerprint column to projects for remote sync group_id
+      db.exec('ALTER TABLE projects ADD COLUMN fingerprint TEXT');
     }
     db.prepare('UPDATE schema_version SET version = ?').run(SCHEMA_VERSION);
   }

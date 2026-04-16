@@ -3,6 +3,23 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { parse } from 'yaml';
 
+export interface RemoteConfig {
+  enabled: boolean;
+  provider: 'graphiti' | 'none';
+  endpoint: string;
+  groupIdPrefix: string;
+  pushOnGenerate: boolean;
+  include: {
+    memories: boolean;
+    summaries: boolean;
+    impactAnalyses: boolean;
+  };
+  auth: {
+    type: 'none' | 'bearer';
+    tokenEnv: string;
+  };
+}
+
 export interface CodeAtlasConfig {
   indexer: {
     extensions: string[];
@@ -21,6 +38,7 @@ export interface CodeAtlasConfig {
     path: string;      // relative to project root
     autoOnboard: boolean;
   };
+  remote: RemoteConfig;
 }
 
 export const DEFAULT_EXTENSIONS: string[] = [
@@ -51,6 +69,23 @@ export const DEFAULT_MODEL = 'claude-sonnet-4-6';
 
 export const DEFAULT_MEMORY_PATH = '.codeatlas/memories';
 
+export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
+  enabled: false,
+  provider: 'graphiti',
+  endpoint: 'http://localhost:8000/mcp',
+  groupIdPrefix: 'codeatlas',
+  pushOnGenerate: false,
+  include: {
+    memories: true,
+    summaries: true,
+    impactAnalyses: false,
+  },
+  auth: {
+    type: 'none',
+    tokenEnv: 'CODEATLAS_GRAPHITI_TOKEN',
+  },
+};
+
 function defaultConfig(): CodeAtlasConfig {
   return {
     indexer: {
@@ -70,6 +105,7 @@ function defaultConfig(): CodeAtlasConfig {
       path: DEFAULT_MEMORY_PATH,
       autoOnboard: true,
     },
+    remote: { ...DEFAULT_REMOTE_CONFIG, include: { ...DEFAULT_REMOTE_CONFIG.include }, auth: { ...DEFAULT_REMOTE_CONFIG.auth } },
   };
 }
 
@@ -166,10 +202,63 @@ export function loadConfig(projectPath: string): CodeAtlasConfig {
       ? memoryRaw['auto_onboard']
       : true;
 
+  // --- remote section ---
+  const D = DEFAULT_REMOTE_CONFIG;
+  const remoteRaw = toRecord(yaml['remote']);
+  const remoteEnabled =
+    remoteRaw && typeof remoteRaw['enabled'] === 'boolean'
+      ? remoteRaw['enabled']
+      : D.enabled;
+  const remoteProvider: RemoteConfig['provider'] =
+    remoteRaw && remoteRaw['provider'] === 'graphiti' ? 'graphiti' : D.provider;
+  const remoteEndpoint =
+    remoteRaw && typeof remoteRaw['endpoint'] === 'string'
+      ? remoteRaw['endpoint']
+      : D.endpoint;
+  const groupIdPrefix =
+    remoteRaw && typeof remoteRaw['group_id_prefix'] === 'string'
+      ? remoteRaw['group_id_prefix']
+      : D.groupIdPrefix;
+  const pushOnGenerate =
+    remoteRaw && typeof remoteRaw['push_on_generate'] === 'boolean'
+      ? remoteRaw['push_on_generate']
+      : D.pushOnGenerate;
+
+  const includeRaw = toRecord(remoteRaw?.['include'] ?? null);
+  const includeMemories =
+    includeRaw && typeof includeRaw['memories'] === 'boolean'
+      ? includeRaw['memories']
+      : D.include.memories;
+  const includeSummaries =
+    includeRaw && typeof includeRaw['summaries'] === 'boolean'
+      ? includeRaw['summaries']
+      : D.include.summaries;
+  const includeImpact =
+    includeRaw && typeof includeRaw['impact_analyses'] === 'boolean'
+      ? includeRaw['impact_analyses']
+      : D.include.impactAnalyses;
+
+  const authRaw = toRecord(remoteRaw?.['auth'] ?? null);
+  const authType: RemoteConfig['auth']['type'] =
+    authRaw && authRaw['type'] === 'bearer' ? 'bearer' : D.auth.type;
+  const tokenEnv =
+    authRaw && typeof authRaw['token_env'] === 'string'
+      ? authRaw['token_env']
+      : D.auth.tokenEnv;
+
   return {
     indexer: { extensions, skipDirs },
     deadCode: { excludeAnnotations, replaceAnnotations, excludePatterns },
     summaries: { model },
     memory: { enabled: memoryEnabled, path: memoryPath, autoOnboard },
+    remote: {
+      enabled: remoteEnabled,
+      provider: remoteProvider,
+      endpoint: remoteEndpoint,
+      groupIdPrefix,
+      pushOnGenerate,
+      include: { memories: includeMemories, summaries: includeSummaries, impactAnalyses: includeImpact },
+      auth: { type: authType, tokenEnv },
+    },
   };
 }

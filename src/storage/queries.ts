@@ -25,6 +25,7 @@ export interface Project {
   name: string;
   root_path: string;
   last_indexed_at: string | null;
+  fingerprint: string | null;
 }
 
 export interface FileRecord {
@@ -84,6 +85,11 @@ export function upsertProject(db: Db, name: string, rootPath: string): Project {
 export function touchProjectIndexed(db: Db, projectId: number): void {
   db.prepare('UPDATE projects SET last_indexed_at = ? WHERE id = ?')
     .run(new Date().toISOString(), projectId);
+}
+
+export function updateProjectFingerprint(db: Db, projectId: number, fingerprint: string): void {
+  db.prepare('UPDATE projects SET fingerprint = ? WHERE id = ?')
+    .run(fingerprint, projectId);
 }
 
 export function listProjects(db: Db): Project[] {
