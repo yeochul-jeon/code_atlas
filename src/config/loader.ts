@@ -18,7 +18,12 @@ export interface CodeAtlasConfig {
   };
 }
 
-export const DEFAULT_EXTENSIONS: string[] = ['.java'];
+export const DEFAULT_EXTENSIONS: string[] = [
+  '.java',
+  '.js', '.mjs', '.cjs', '.jsx',
+  '.ts', '.mts', '.cts', '.tsx',
+  '.vue',
+];
 
 export const DEFAULT_SKIP_DIRS: string[] = ['node_modules', 'build', 'target', '.gradle'];
 
