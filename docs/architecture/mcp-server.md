@@ -1,12 +1,13 @@
 # MCP 서버 & 도구
 
 CodeAtlas는 [Model Context Protocol(MCP)](https://modelcontextprotocol.io) 표준을 구현한 stdio 서버로 동작합니다.  
-Claude 같은 MCP 클라이언트에 **17개 코드 탐색·편집 도구**를 제공합니다.
+Claude 같은 MCP 클라이언트에 **24개 코드 탐색·편집·메모리 도구**를 제공합니다.
 
 **관련 파일**:
 - `src/mcp/server.ts` — 서버 진입점, 도구 등록
 - `src/mcp/write-tools.ts` — 편집 도구 구현
 - `src/mcp/dead-code-formatter.ts` — 데드 코드 결과 포맷터
+- `src/mcp/memory-tools.ts` — 메모리 도구 어댑터
 
 ---
 
@@ -26,7 +27,7 @@ let summarizer: Summarizer | null = null;    // AI 요약
 let vectorStore: VectorStore | null = null;   // 시맨틱 검색
 let embedder: Embedder | null = null;
 
-// 도구 17개 등록
+// 도구 24개 등록
 server.tool('list_projects', ...);
 server.tool('search_symbols', ...);
 // ...
@@ -391,12 +392,12 @@ if (!vectorStore) {
 
 ## 도구 분류 개요
 
-17개 도구를 역할별로 분류하면 다음과 같습니다:
+24개 도구를 역할별로 분류하면 다음과 같습니다:
 
 ```mermaid
 %%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#3b82f6', 'primaryTextColor': '#f8fafc', 'primaryBorderColor': '#60a5fa', 'lineColor': '#94a3b8', 'secondaryColor': '#1e293b', 'tertiaryColor': '#0f172a'}}}%%
 flowchart LR
-    MCP(["🔌 MCP Server\n17개 도구"]):::mcp
+    MCP(["🔌 MCP Server\n24개 도구"]):::mcp
 
     subgraph NAV["🔍 코드 탐색 (8개)"]
         N1["list_projects"]:::cli
@@ -427,7 +428,15 @@ flowchart LR
         E4["rename_symbol"]:::mcp
     end
 
-    MCP --> NAV & ANAL & AI & EDIT
+    subgraph MEM["📝 메모리 (5개)"]
+        M1["write_memory"]:::engine
+        M2["read_memory"]:::engine
+        M3["list_memories"]:::engine
+        M4["edit_memory"]:::engine
+        M5["delete_memory"]:::engine
+    end
+
+    MCP --> NAV & ANAL & AI & EDIT & MEM
 
     classDef mcp fill:#06b6d4,stroke:#22d3ee,color:#f8fafc
     classDef cli fill:#3b82f6,stroke:#60a5fa,color:#f8fafc
@@ -459,3 +468,10 @@ flowchart LR
 | 15 | `insert_after_symbol` | 편집 | |
 | 16 | `insert_before_symbol` | 편집 | |
 | 17 | `rename_symbol` | 편집 | |
+| 18 | `get_impact_analysis` | 분석 | |
+| 19 | `find_circular_deps` | 분석 | |
+| 20 | `write_memory` | 메모리 | |
+| 21 | `read_memory` | 메모리 | |
+| 22 | `list_memories` | 메모리 | |
+| 23 | `edit_memory` | 메모리 | |
+| 24 | `delete_memory` | 메모리 | |

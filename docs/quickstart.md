@@ -1,6 +1,6 @@
 # CodeAtlas 퀵스타트
 
-**5분 안에 Java 프로젝트를 AI가 탐색 가능한 코드 인덱스로 만드세요.**
+**5분 안에 Java · JS · TS · Vue 프로젝트를 AI가 탐색 가능한 코드 인덱스로 만드세요.**
 
 ```mermaid
 %%{init: {'theme': 'dark', 'themeVariables': {'primaryColor': '#3b82f6', 'primaryTextColor': '#f8fafc', 'primaryBorderColor': '#60a5fa', 'lineColor': '#94a3b8', 'secondaryColor': '#1e293b', 'tertiaryColor': '#0f172a'}}}%%
@@ -26,7 +26,7 @@ flowchart LR
 ## 전제 조건
 
 - Node.js 20 이상
-- Java 프로젝트 1개 (인덱싱 대상)
+- Java · JS · TS · Vue 프로젝트 1개 (인덱싱 대상)
 - Claude Code (MCP 연동 사용 시)
 
 ---
@@ -57,7 +57,7 @@ npm link
 ## Step 2 — 프로젝트 인덱싱
 
 ```bash
-# 기본 인덱싱 (Java 파일만)
+# 기본 인덱싱 (Java · JS · TS · Vue 파일)
 codeatlas index /path/to/your-project
 
 # 이름 지정
@@ -123,7 +123,7 @@ codeatlas search Repository --kind class
 
 > `npm link` 를 했다면 `"command": "codeatlas", "args": ["serve"]` 로 단순화 가능
 
-Claude Code를 재시작하면 **17개 코드 탐색 도구**가 활성화됩니다.
+Claude Code를 재시작하면 **24개 코드 탐색·편집·메모리 도구**가 활성화됩니다.
 
 ---
 
